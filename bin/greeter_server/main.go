@@ -40,9 +40,20 @@ const (
 
 func main() {
 
+	// create server
 	grpcServer := grpc.NewServer()
 	helloworld.RegisterGreeterServer(grpcServer, helloworld.NewServerImpl())
 	reflection.Register(grpcServer)
+
+	// create client
+	yDialer := helloworld.NewYamuxDialer()
+	gconn, err := grpc.Dial("localhost:50000", grpc.WithInsecure(), grpc.WithDialer(yDialer.Dial))
+	if err != nil {
+		fmt.Println("failed to create grpc client: ", err)
+		return
+	}
+	defer gconn.Close()
+	grpcClient := helloworld.NewGreeterClient(gconn)
 
 	// create underlying tcp listener
 	lis, err := net.Listen("tcp", port)
@@ -57,12 +68,20 @@ func main() {
 	yamuxL := mux.Match(cmux.Any())
 
 	go grpcServer.Serve(grpcL)
-	go runLoop(yamuxL, grpcServer)
+	go runLoop(yamuxL, grpcServer, yDialer)
+
+	// start client conn back to agent
+	go func() {
+		for {
+			helloworld.Greet(grpcClient, "client", "bob")
+			time.Sleep(helloworld.Timeout)
+		}
+	}()
 
 	mux.Serve()
 }
 
-func runLoop(lis net.Listener, grpcServer *grpc.Server) {
+func runLoop(lis net.Listener, grpcServer *grpc.Server, dialer *helloworld.YamuxDialer) {
 	for {
 		// accept a new connection and set up a yamux session on it
 		conn, err := lis.Accept()
@@ -79,32 +98,8 @@ func runLoop(lis net.Listener, grpcServer *grpc.Server) {
 		// start grpc server using yamux session (which implements net.Listener)
 		go grpcServer.Serve(session)
 
-		// start client conn back to agent
-		go func() {
-			dialerOpts := grpc.WithDialer(func(addr string, d time.Duration) (net.Conn, error) {
-				// custom dialer which opens a new conn via yamux session
-				return session.Open()
-			})
-
-			gconn, err := grpc.Dial("localhost:50000", grpc.WithInsecure(), dialerOpts)
-			if err != nil {
-				fmt.Println("failed to create grpc client: ", err)
-				return
-			}
-			defer gconn.Close()
-
-			c := helloworld.NewGreeterClient(gconn)
-
-			for {
-				err := helloworld.Greet(c, "client", "bob")
-				if err != nil {
-					return // stop greeting on this channel
-				}
-				time.Sleep(helloworld.Timeout)
-			}
-
-		}()
-
+		// pass session to grpc client
+		dialer.SetSession(session)
 	}
 
 }

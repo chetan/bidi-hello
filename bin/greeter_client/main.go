@@ -53,10 +53,27 @@ func main() {
 	helloworld.RegisterGreeterServer(grpcServer, helloworld.NewServerImpl())
 	reflection.Register(grpcServer)
 
+	// create client
+	yDialer := helloworld.NewYamuxDialer()
+	gconn, err := grpc.Dial(address, grpc.WithInsecure(), grpc.WithDialer(yDialer.Dial))
+	if err != nil {
+		log.Fatalf("did not connect: %v", err)
+	}
+	defer gconn.Close()
+	grpcClient := helloworld.NewGreeterClient(gconn)
+
+	// run client loop
+	go func() {
+		for {
+			helloworld.Greet(grpcClient, "server", name)
+			time.Sleep(helloworld.Timeout)
+		}
+	}()
+
 	for {
 		// connect and loop forever to keep retrying in the case that the connection
 		// drops for any reason
-		connect(address, name, grpcServer)
+		connect(address, grpcServer, yDialer)
 		time.Sleep(1 * time.Second)
 	}
 }
@@ -87,7 +104,7 @@ func doPlainClient(addr string, name string) {
 // multiplexing both grpc client and server on the same underlying tcp socket
 //
 // this is separate from the run-loop for easy resource cleanup via defer
-func connect(addr string, name string, grpcServer *grpc.Server) {
+func connect(addr string, grpcServer *grpc.Server, yDialer *helloworld.YamuxDialer) {
 	// dial underlying tcp connection
 	conn, err := (&net.Dialer{}).DialContext(context.Background(), "tcp", addr)
 	if err != nil {
@@ -105,27 +122,7 @@ func connect(addr string, name string, grpcServer *grpc.Server) {
 	// now that we have a connection, create both clients & servers
 
 	// setup client
-	go func() {
-		dialerOpts := grpc.WithDialer(func(addr string, d time.Duration) (net.Conn, error) {
-			// custom dialer which opens a new conn via yamux session
-			return session.Open()
-		})
-		gconn, err := grpc.Dial(address, grpc.WithInsecure(), dialerOpts)
-		if err != nil {
-			log.Fatalf("did not connect: %v", err)
-		}
-		defer gconn.Close()
-
-		grpcClient := helloworld.NewGreeterClient(gconn)
-		for {
-			err := helloworld.Greet(grpcClient, "server", name)
-			if err != nil {
-				log.Printf("greet err: %s", err)
-				break
-			}
-			time.Sleep(helloworld.Timeout)
-		}
-	}()
+	yDialer.SetSession(session)
 
 	// setup server
 	go func() {
