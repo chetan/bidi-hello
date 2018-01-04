@@ -41,7 +41,12 @@ func main() {
 	// args
 	name := defaultName
 	if len(os.Args) > 1 {
-		name = os.Args[1]
+		if os.Args[1] == "--plain" {
+			doPlainClient(address, name)
+			return
+		} else {
+			name = os.Args[1]
+		}
 	}
 
 	// create reusable grpc server
@@ -54,6 +59,26 @@ func main() {
 		// drops for any reason
 		connect(address, name, grpcServer)
 		time.Sleep(1 * time.Second)
+	}
+}
+
+// doPlainClient creates a client-only connection to the server w/o the use of
+// yamux. This is to show that a non-wrapped client can still talk to the server.
+func doPlainClient(addr string, name string) {
+	gconn, err := grpc.Dial(address, grpc.WithInsecure())
+	if err != nil {
+		log.Fatalf("did not connect: %v", err)
+	}
+	defer gconn.Close()
+
+	grpcClient := helloworld.NewGreeterClient(gconn)
+	for {
+		err := helloworld.Greet(grpcClient, "server", name)
+		if err != nil {
+			log.Printf("greet err: %s", err)
+			break
+		}
+		time.Sleep(helloworld.Timeout)
 	}
 }
 
@@ -99,7 +124,7 @@ func connect(addr string, name string, grpcServer *grpc.Server) {
 				log.Printf("greet err: %s", err)
 				break
 			}
-			time.Sleep(time.Second * 2)
+			time.Sleep(helloworld.Timeout)
 		}
 	}()
 

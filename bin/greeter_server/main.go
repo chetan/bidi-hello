@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/yamux"
+	"github.com/soheilhy/cmux"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 
@@ -49,6 +50,17 @@ func main() {
 		log.Fatalf("failed to listen: %v", err)
 	}
 
+	mux := cmux.New(lis)
+	grpcL := mux.Match(cmux.HTTP2HeaderField("content-type", "application/grpc"))
+	yamuxL := mux.Match(cmux.Any())
+
+	go grpcServer.Serve(grpcL)
+	go runLoop(yamuxL, grpcServer)
+
+	mux.Serve()
+}
+
+func runLoop(lis net.Listener, grpcServer *grpc.Server) {
 	for {
 		// accept a new connection and set up a yamux session on it
 		conn, err := lis.Accept()
@@ -86,7 +98,7 @@ func main() {
 				if err != nil {
 					return // stop greeting on this channel
 				}
-				time.Sleep(time.Second * 2)
+				time.Sleep(helloworld.Timeout)
 			}
 
 		}()
