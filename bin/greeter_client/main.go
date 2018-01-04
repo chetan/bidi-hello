@@ -44,9 +44,8 @@ func main() {
 		if os.Args[1] == "--plain" {
 			doPlainClient(address, name)
 			return
-		} else {
-			name = os.Args[1]
 		}
+		name = os.Args[1]
 	}
 
 	// create reusable grpc server

@@ -50,6 +50,8 @@ func main() {
 		log.Fatalf("failed to listen: %v", err)
 	}
 
+	// use cmux to look for plain http2 clients
+	// this allows us to support non-yamux enabled clients (such as non-golang impls)
 	mux := cmux.New(lis)
 	grpcL := mux.Match(cmux.HTTP2HeaderField("content-type", "application/grpc"))
 	yamuxL := mux.Match(cmux.Any())
