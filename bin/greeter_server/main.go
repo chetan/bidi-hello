@@ -21,13 +21,8 @@
 package main
 
 import (
-	"fmt"
-	"log"
-	"net"
 	"time"
 
-	"github.com/hashicorp/yamux"
-	"github.com/soheilhy/cmux"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 
@@ -45,61 +40,14 @@ func main() {
 	helloworld.RegisterGreeterServer(grpcServer, helloworld.NewServerImpl())
 	reflection.Register(grpcServer)
 
-	// create client
-	yDialer := helloworld.NewYamuxDialer()
-	gconn, err := grpc.Dial("localhost:50000", grpc.WithInsecure(), grpc.WithDialer(yDialer.Dial))
-	if err != nil {
-		fmt.Println("failed to create grpc client: ", err)
-		return
-	}
+	gconn := helloworld.Listen(port, grpcServer)
 	defer gconn.Close()
 	grpcClient := helloworld.NewGreeterClient(gconn)
 
-	// create underlying tcp listener
-	lis, err := net.Listen("tcp", port)
-	if err != nil {
-		log.Fatalf("failed to listen: %v", err)
-	}
-
-	// use cmux to look for plain http2 clients
-	// this allows us to support non-yamux enabled clients (such as non-golang impls)
-	mux := cmux.New(lis)
-	grpcL := mux.Match(cmux.HTTP2HeaderField("content-type", "application/grpc"))
-	yamuxL := mux.Match(cmux.Any())
-
-	go grpcServer.Serve(grpcL)
-	go runLoop(yamuxL, grpcServer, yDialer)
-
 	// start client conn back to agent
-	go func() {
-		for {
-			helloworld.Greet(grpcClient, "client", "bob")
-			time.Sleep(helloworld.Timeout)
-		}
-	}()
-
-	mux.Serve()
-}
-
-func runLoop(lis net.Listener, grpcServer *grpc.Server, dialer *helloworld.YamuxDialer) {
 	for {
-		// accept a new connection and set up a yamux session on it
-		conn, err := lis.Accept()
-		if err != nil {
-			panic(err)
-		}
-
-		// server session will be used to multiplex both clients & servers
-		session, err := yamux.Server(conn, nil)
-		if err != nil {
-			panic(err)
-		}
-
-		// start grpc server using yamux session (which implements net.Listener)
-		go grpcServer.Serve(session)
-
-		// pass session to grpc client
-		dialer.SetSession(session)
+		helloworld.Greet(grpcClient, "client", "bob")
+		time.Sleep(helloworld.Timeout)
 	}
 
 }

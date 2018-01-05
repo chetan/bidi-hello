@@ -20,12 +20,9 @@ package main
 
 import (
 	"log"
-	"net"
 	"os"
 	"time"
 
-	"github.com/hashicorp/yamux"
-	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 
@@ -53,28 +50,15 @@ func main() {
 	helloworld.RegisterGreeterServer(grpcServer, helloworld.NewServerImpl())
 	reflection.Register(grpcServer)
 
-	// create client
-	yDialer := helloworld.NewYamuxDialer()
-	gconn, err := grpc.Dial(address, grpc.WithInsecure(), grpc.WithDialer(yDialer.Dial))
-	if err != nil {
-		log.Fatalf("did not connect: %v", err)
-	}
+	// open channel and create client
+	gconn := helloworld.Connect(address, grpcServer)
 	defer gconn.Close()
 	grpcClient := helloworld.NewGreeterClient(gconn)
 
 	// run client loop
-	go func() {
-		for {
-			helloworld.Greet(grpcClient, "server", name)
-			time.Sleep(helloworld.Timeout)
-		}
-	}()
-
 	for {
-		// connect and loop forever to keep retrying in the case that the connection
-		// drops for any reason
-		connect(address, grpcServer, yDialer)
-		time.Sleep(1 * time.Second)
+		helloworld.Greet(grpcClient, "server", name)
+		time.Sleep(helloworld.Timeout)
 	}
 }
 
@@ -96,50 +80,4 @@ func doPlainClient(addr string, name string) {
 		}
 		time.Sleep(helloworld.Timeout)
 	}
-}
-
-// connect to server
-//
-// dials out to the target server and then sets up a yamux channel for
-// multiplexing both grpc client and server on the same underlying tcp socket
-//
-// this is separate from the run-loop for easy resource cleanup via defer
-func connect(addr string, grpcServer *grpc.Server, yDialer *helloworld.YamuxDialer) {
-	// dial underlying tcp connection
-	conn, err := (&net.Dialer{}).DialContext(context.Background(), "tcp", addr)
-	if err != nil {
-		log.Printf("Failed to connect %s", err)
-		return
-	}
-	defer conn.Close()
-
-	session, err := yamux.Client(conn, nil)
-	if err != nil {
-		panic(err)
-	}
-	defer session.Close()
-
-	// now that we have a connection, create both clients & servers
-
-	// setup client
-	yDialer.SetSession(session)
-
-	// setup server
-	go func() {
-		// start grpc server using yamux session which implements the net.Listener interface
-		if err := grpcServer.Serve(session); err != nil {
-			// err will be returned when the server exits (underlying connection closes / client goes away)
-			log.Printf("grpc serve err: %v", err)
-		}
-	}()
-
-	// reading from a channel blocks until some data is avail
-	// no data will ever be sent on this channel, it will simple close
-	// when the session (connection) closes or any reason, thus unblocking
-	// and continuing program execution.
-	//
-	// alternatively we could have used a sync.WaitGroup to look for our two
-	// goroutines to exit, but this is simpler as it watches the underlying
-	// resource.
-	<-session.CloseChan()
 }

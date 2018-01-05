@@ -27,15 +27,21 @@ This is the grpc server implementation code (as in the original greeter_server)
 
 This just calls the greet methods using the given client stub (as in the original greeter_client)
 
+### helloworld/yamux_dialer.go
+
+A `grpc.Dialer` implementation which uses a `yamux.Session` for the underlying `net.Con`.
+
+### helloworld/bidi.go
+
+This wraps the setup of both the client and server connections using cmux and
+yamux.
+
 ### bin/greeter_server/main.go
 
-This starts the main listener endpoint on port 50051 and establishes a
-`yamux.Server` session to create a channel over which both grpc client and
-server can operate. yamux allows us to initiate the connection in either
-direction and still provide both net.Conn and Net.Listener interfaces.
+This starts the "server" end of the bidi channel, i.e., the end which starts a
+TCP listener.
 
 ### bin/greeter_client/main.go
 
-The client opens a single connection to the server on port 50051 and establishes
-a `yamux.Client` session over which both grpc client and server are created, in
-much the same as the server, above.
+This starts the "client" end of the bidi channel, i.e., the end which initiates
+the TCP connection to the server.
